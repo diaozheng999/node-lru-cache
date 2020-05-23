@@ -1,8 +1,8 @@
 # lru cache
 
-A cache object that deletes the least-recently-used items.
+A fork of `lru-cache` for Deno.
 
-[![Build Status](https://travis-ci.org/isaacs/node-lru-cache.svg?branch=master)](https://travis-ci.org/isaacs/node-lru-cache) [![Coverage Status](https://coveralls.io/repos/isaacs/node-lru-cache/badge.svg?service=github)](https://coveralls.io/github/isaacs/node-lru-cache)
+A cache object that deletes the least-recently-used items.
 
 ## Installation:
 

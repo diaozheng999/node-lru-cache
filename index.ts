@@ -1,7 +1,10 @@
 'use strict'
 
+import type LRUCacheT from "https://unpkg.com/@types/lru-cache@5.1.0/index.d.ts";
+import type YallistT from "https://unpkg.com/@types/yallist@3.0.1/index.d.ts";
+
 // A linked list to keep track of recently-used-ness
-const Yallist = require('yallist')
+import Yallist from "./yallist.js";
 
 const MAX = Symbol('max')
 const LENGTH = Symbol('length')
@@ -24,8 +27,19 @@ const naiveLength = () => 1
 //
 // cache is a Map (or PseudoMap) that matches the keys to
 // the Yallist.Node object.
-class LRUCache {
-  constructor (options) {
+class LRUCache<K, V> implements LRUCacheT<K, V> {
+  private [MAX]: number;
+  private [LENGTH]: number;
+  private [LENGTH_CALCULATOR]: (n: V, k?: K) => number;
+  private [ALLOW_STALE]: boolean;
+  private [MAX_AGE]: number;
+  private [DISPOSE]?: (k: K, v: V) => void;
+  private [NO_DISPOSE_ON_SET]: boolean;
+  private [UPDATE_AGE_ON_GET]: boolean;
+  private [LRU_LIST]: YallistT<Entry<K, V>>;
+  private [CACHE]: Map<K, YallistT.Node<Entry<K, V>>>;
+
+  constructor (options: LRUCacheT.Options<K, V>) {
     if (typeof options === 'number')
       options = { max: options }
 
@@ -94,25 +108,27 @@ class LRUCache {
     }
     trim(this)
   }
-  get lengthCalculator () { return this[LENGTH_CALCULATOR] }
+  get lengthCalculator () { return this[LENGTH_CALCULATOR]; }
 
   get length () { return this[LENGTH] }
   get itemCount () { return this[LRU_LIST].length }
 
-  rforEach (fn, thisp) {
+  rforEach<T = this>(callbackFn: (this: T, value: V, key: K, cache: this) => void, thisArg?: T): void;
+  rforEach (fn: (this: any, v: V, k: K, c: this) => void, thisp?: any) {
     thisp = thisp || this
     for (let walker = this[LRU_LIST].tail; walker !== null;) {
       const prev = walker.prev
-      forEachStep(this, fn, walker, thisp)
+      forEachStep(this, fn as any, walker, thisp)
       walker = prev
     }
   }
 
-  forEach (fn, thisp) {
+  forEach<T = this>(callbackFn: (this: T, value: V, key: K, cache: this) => void, thisArg?: T): void;
+  forEach (fn: (this: any, v: V, k: K, c: this) => void, thisp?: any) {
     thisp = thisp || this
     for (let walker = this[LRU_LIST].head; walker !== null;) {
       const next = walker.next
-      forEachStep(this, fn, walker, thisp)
+      forEachStep(this, fn as any, walker, thisp)
       walker = next
     }
   }
@@ -129,7 +145,7 @@ class LRUCache {
     if (this[DISPOSE] &&
         this[LRU_LIST] &&
         this[LRU_LIST].length) {
-      this[LRU_LIST].forEach(hit => this[DISPOSE](hit.key, hit.value))
+      this[LRU_LIST].forEach(hit => this[DISPOSE]!(hit.key, hit.value))
     }
 
     this[CACHE] = new Map() // hash of items by key
@@ -143,14 +159,14 @@ class LRUCache {
         k: hit.key,
         v: hit.value,
         e: hit.now + (hit.maxAge || 0)
-      }).toArray().filter(h => h)
+      }).toArray().filter((h: any): h is LRUCacheT.Entry<K, V> => h)
   }
 
   dumpLru () {
     return this[LRU_LIST]
   }
 
-  set (key, value, maxAge) {
+  set (key: K, value: V, maxAge?: number) {
     maxAge = maxAge || this[MAX_AGE]
 
     if (maxAge && typeof maxAge !== 'number')
@@ -165,14 +181,14 @@ class LRUCache {
         return false
       }
 
-      const node = this[CACHE].get(key)
+      const node = this[CACHE].get(key)!
       const item = node.value
 
       // dispose of the old one before overwriting
       // split out into 2 ifs for better coverage tracking
       if (this[DISPOSE]) {
         if (!this[NO_DISPOSE_ON_SET])
-          this[DISPOSE](key, item.value)
+          this[DISPOSE]!(key, item.value)
       }
 
       item.now = now
@@ -190,29 +206,29 @@ class LRUCache {
     // oversized objects fall out of cache automatically.
     if (hit.length > this[MAX]) {
       if (this[DISPOSE])
-        this[DISPOSE](key, value)
+        this[DISPOSE]!(key, value)
 
       return false
     }
 
     this[LENGTH] += hit.length
     this[LRU_LIST].unshift(hit)
-    this[CACHE].set(key, this[LRU_LIST].head)
+    this[CACHE].set(key, this[LRU_LIST].head!)
     trim(this)
     return true
   }
 
-  has (key) {
+  has (key: K) {
     if (!this[CACHE].has(key)) return false
-    const hit = this[CACHE].get(key).value
+    const hit = this[CACHE].get(key)!.value
     return !isStale(this, hit)
   }
 
-  get (key) {
+  get (key: K) {
     return get(this, key, true)
   }
 
-  peek (key) {
+  peek (key: K) {
     return get(this, key, false)
   }
 
@@ -225,11 +241,11 @@ class LRUCache {
     return node.value
   }
 
-  del (key) {
+  del (key: K) {
     del(this, this[CACHE].get(key))
   }
 
-  load (arr) {
+  load (arr: ReadonlyArray<LRUCacheT.Entry<K, V>>) {
     // reset the cache
     this.reset()
 
@@ -256,7 +272,7 @@ class LRUCache {
   }
 }
 
-const get = (self, key, doUse) => {
+const get = <K, V>(self: LRUCache<K, V>, key: K, doUse: boolean) => {
   const node = self[CACHE].get(key)
   if (node) {
     const hit = node.value
@@ -275,7 +291,7 @@ const get = (self, key, doUse) => {
   }
 }
 
-const isStale = (self, hit) => {
+const isStale = <K, V>(self: LRUCache<K, V>, hit: Entry<K, V>) => {
   if (!hit || (!hit.maxAge && !self[MAX_AGE]))
     return false
 
@@ -284,7 +300,7 @@ const isStale = (self, hit) => {
     : self[MAX_AGE] && (diff > self[MAX_AGE])
 }
 
-const trim = self => {
+const trim = <K, V>(self: LRUCache<K, V>) => {
   if (self[LENGTH] > self[MAX]) {
     for (let walker = self[LRU_LIST].tail;
       self[LENGTH] > self[MAX] && walker !== null;) {
@@ -298,11 +314,11 @@ const trim = self => {
   }
 }
 
-const del = (self, node) => {
+const del = <K, V>(self: LRUCache<K, V>, node?: YallistT.Node<Entry<K, V>>) => {
   if (node) {
     const hit = node.value
     if (self[DISPOSE])
-      self[DISPOSE](hit.key, hit.value)
+      self[DISPOSE]!(hit.key, hit.value)
 
     self[LENGTH] -= hit.length
     self[CACHE].delete(hit.key)
@@ -310,8 +326,13 @@ const del = (self, node) => {
   }
 }
 
-class Entry {
-  constructor (key, value, length, now, maxAge) {
+class Entry<K, V> {
+  public key: K;
+  public value: V;
+  public length: number;
+  public now: number;
+  public maxAge: number;
+  constructor (key: K, value: V, length: number, now: number, maxAge: number) {
     this.key = key
     this.value = value
     this.length = length
@@ -320,8 +341,13 @@ class Entry {
   }
 }
 
-const forEachStep = (self, fn, node, thisp) => {
-  let hit = node.value
+const forEachStep = <K, V, T = LRUCache<K, V>>(
+  self: LRUCache<K, V>,
+  fn: (this: T, v: V, k: K, cache: LRUCache<K, V>) => void,
+  node: YallistT.Node<Entry<K, V>>,
+  thisp: T
+) => {
+  let hit: Entry<K, V> | undefined = node.value
   if (isStale(self, hit)) {
     del(self, node)
     if (!self[ALLOW_STALE])
@@ -331,4 +357,4 @@ const forEachStep = (self, fn, node, thisp) => {
     fn.call(thisp, hit.value, hit.key, self)
 }
 
-module.exports = LRUCache
+export default LRUCache
